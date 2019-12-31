@@ -1,0 +1,1 @@
+web: python lieksika_bot.py
