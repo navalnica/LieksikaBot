@@ -35,14 +35,16 @@ def error_handler(update: Update, context: CallbackContext):
 
 
 def remove_inline_keyboard_from_last_photo(bot, chat_id, user_data):
-    if last_photo_message_id_key in user_data:
-        bot.edit_message_reply_markup(
-            chat_id,
-            user_data[last_photo_message_id_key],
-            reply_markup=None
-        )
-        del user_data[last_photo_message_id_key]
-
+    try:
+        if last_photo_message_id_key in user_data:
+            bot.edit_message_reply_markup(
+                chat_id,
+                user_data[last_photo_message_id_key],
+                reply_markup=None
+            )
+            del user_data[last_photo_message_id_key]
+    except Exception as e:
+        logger.error(e)
 
 def start(update: Update, context: CallbackContext):
     remove_inline_keyboard_from_last_photo(context.bot, update.effective_user.id, context.user_data)
@@ -170,6 +172,7 @@ def main():
         updater.start_webhook(listen="0.0.0.0", port=port, url_path=token)
         updater.bot.setWebhook(f'https://{heroku_app_name}.herokuapp.com/{token}')
     elif mode == 'local':
+        dp.bot.delete_webhook()
         updater.start_polling()
     updater.idle()
 
