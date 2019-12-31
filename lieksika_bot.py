@@ -134,7 +134,9 @@ def photo_inline_keyboard_handler(update, context):
 
 
 def main():
-    heroku_app_name = "dtowddf-bot"
+    heroku_app_name = os.environ.get('APP_NAME')
+    if not heroku_app_name:
+        raise EnvironmentError('APP_NAME variable not found in environment')
 
     token = os.environ.get('BOT_TOKEN')
     if not token:
