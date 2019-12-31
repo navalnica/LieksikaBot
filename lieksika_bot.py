@@ -134,10 +134,6 @@ def photo_inline_keyboard_handler(update, context):
 
 
 def main():
-    heroku_app_name = os.environ.get('APP_NAME')
-    if not heroku_app_name:
-        raise EnvironmentError('APP_NAME variable not found in environment')
-
     token = os.environ.get('BOT_TOKEN')
     if not token:
         raise EnvironmentError('BOT_TOKEN variable not found in environment')
@@ -148,11 +144,14 @@ def main():
     logger.info(f'running in {mode} mode')
 
     port = os.environ.get('PORT')
+    heroku_app_name = os.environ.get('APP_NAME')
     if mode == 'heroku':
         if port is None:
             raise EnvironmentError('PORT variable not found in environment')
         else:
             port = int(port)
+        if heroku_app_name is None:
+            raise EnvironmentError('APP_NAME variable not found in environment')
 
     updater = Updater(token, use_context=True)
     dp = updater.dispatcher
