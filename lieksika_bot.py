@@ -1,3 +1,4 @@
+import datetime
 import json
 import logging
 import os
@@ -48,19 +49,23 @@ def error_handler(update: Update, context: CallbackContext):
     logger.error(f'Update:\n{update}')
     logger.exception(context.error)
 
+    # send detailed report to developer
     traceback_str = ''.join(traceback.format_tb(context.error.__traceback__))
     user_info_str = get_user_info_str(update.effective_user)
-    update_json = update.to_json()
+    # convert TelegramObject to json, load it to dict
+    # and then dump back to json with pretty indents
+    update_json = json.dumps(json.loads(update.to_json()), indent=2)
     message = (f'#error\n\n'
                f'user:\n{user_info_str}\n\n'
-               f'error:\n`{context.error}`\n\n'
-               f'traceback:\n`{traceback_str}`\n\n'
-               f'update:\n`{update_json}`')
-    context.bot.send_message(
-        contact_chat_id,
-        message,
-        parse_mode=ParseMode.MARKDOWN
-    )
+               f'error:\n`{context.error}`\n\n')
+    error_fn = f'error_{datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")}.txt'
+    with open(error_fn, 'w') as fout:
+        fout.write(f'user:\n{user_info_str}\n\n')
+        fout.write(f'error:\n{context.error}\n\n')
+        fout.write(f'traceback:\n{traceback_str}\n\n')
+        fout.write(f'update:\n{update_json}')
+    with open(error_fn, 'rb') as fin:
+        context.bot.send_document(contact_chat_id, document=fin, caption=message, parse_mode=ParseMode.MARKDOWN)
 
 
 def remove_inline_keyboard_from_last_photo(bot, chat_id, user_data):
@@ -83,6 +88,8 @@ def get_user_info_str(user: User):
 
 
 def about(update, context):
+    if update.message is None:
+        return
     bot_description = ('Прывітанне!\nLieksika Bot ведае больш за 300 цікавых і адметных беларускіх словаў. '
                        'І іх спіс будзе пашырацца!\n\n'
                        'Яны захоўваюцца ў выглядзе скрыншотаў з рэсурсаў slounik.org, skarnik.by.\n'
