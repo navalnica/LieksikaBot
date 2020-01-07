@@ -6,7 +6,7 @@ import traceback
 
 import numpy as np
 import requests
-from telegram import (Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, ReplyKeyboardRemove, User,
+from telegram import (Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, User,
                       ParseMode)
 from telegram.ext import (Updater, CallbackContext, CommandHandler, ConversationHandler, MessageHandler, Filters,
                           CallbackQueryHandler)
@@ -17,14 +17,18 @@ from telegram.ext import (Updater, CallbackContext, CommandHandler, Conversation
 # TODO: add methods decorator to remove previous inline keyboard
 
 # conversation states
-FEEDBACK_RECEIVING, FEEDBACK_VERIFICATION = range(2)
+CONV_STATE_FB_RECEIVING, CONV_STATE_FB_VERIFICATION = range(2)
+CONV_STATE_GET_WORD_RECEIVED = 2
 
 # inline keyboard callback data
-RESEND_CURRENT, SEND_NEXT, FEEDBACK_VERIFY, FEEDBACK_REJECT = map(str, range(4))
+CB_DATA_GET_WORD_RESEND_CURRENT, CB_DATA_GET_WORD_SEND_NEXT = map(str, range(2))
+CB_DATA_FB_VERIFY, CB_DATA_FB_REJECT = map(str, range(2, 4))
 
 conversation_context = dict()
 
-K_LAST_PHOTO_MESSAGE_ID = 'last_photo_message_id'
+K_CONV_GET_WORD_ACTIVE = 'conversation_get_word_active'
+K_GET_WORD_LAST_MESSAGE_ID = 'last_photo_message_id'
+K_CONV_FB_ACTIVE = 'conversation_feedback_active'
 K_FB_MESSAGE_ID = 'feedback_message_id'
 K_FB_MESSAGE_WITH_INLINE_KEYBOARD_ID = 'feedback_message_with_inline_keyboard'
 
@@ -68,16 +72,6 @@ def error_handler(update: Update, context: CallbackContext):
         context.bot.send_document(contact_chat_id, document=fin, caption=message, parse_mode=ParseMode.MARKDOWN)
 
 
-def remove_inline_keyboard_from_last_photo(bot, chat_id, user_data):
-    if K_LAST_PHOTO_MESSAGE_ID in user_data:
-        try:
-            bot.edit_message_reply_markup(chat_id, user_data[K_LAST_PHOTO_MESSAGE_ID], reply_markup=None)
-        except Exception as e:
-            logger.exception(e)
-        finally:
-            del user_data[K_LAST_PHOTO_MESSAGE_ID]
-
-
 def get_user_info_str(user: User):
     info = (f'id: {user.id}\n'
             f'full name: {user.full_name}\n'
@@ -87,12 +81,15 @@ def get_user_info_str(user: User):
     return info
 
 
-def about(update, context):
+def about(update: Update, context):
+    conversations_cleanup_if_needed(update.effective_user.id, context.bot)
+
     if update.message is None:
         return
+
     bot_description = ('Прывітанне!\nLieksika Bot ведае больш за 300 цікавых і адметных беларускіх словаў. '
                        'І іх спіс будзе пашырацца!\n\n'
-                       'Яны захоўваюцца ў выглядзе скрыншотаў з рэсурсаў slounik.org, skarnik.by.\n'
+                       'Словы захоўваюцца ў выглядзе скрыншотаў з рэсурсаў slounik.org, skarnik.by.\n'
                        'Вялікі дзякуй іх распрацоўшчыкам за праведзеную працу па сістэматызацыі і стварэнні '
                        'сайтаў і мабільнага дадатку. На жаль, іх інтэрфэйсы не маюць магчымасці ствараць падборкі '
                        'словаў, дасылаць напаміны для паўтарэння вывучаных словаў. '
@@ -113,7 +110,8 @@ def about(update, context):
 
 
 def start(update: Update, context: CallbackContext):
-    remove_inline_keyboard_from_last_photo(context.bot, update.effective_user.id, context.user_data)
+    conversations_cleanup_if_needed(update.effective_user.id, context.bot)
+
     about(update, context)
     help(update, context)
 
@@ -123,7 +121,8 @@ def start(update: Update, context: CallbackContext):
 
 
 def dad_joke(update, context):
-    remove_inline_keyboard_from_last_photo(context.bot, update.effective_user.id, context.user_data)
+    conversations_cleanup_if_needed(update.effective_user.id, context.bot)
+
     url = "https://icanhazdadjoke.com/"
     headers = {'Accept': 'application/json'}
     r = requests.request("GET", url, headers=headers)
@@ -132,7 +131,9 @@ def dad_joke(update, context):
 
 
 def help(update: Update, context: CallbackContext):
-    remove_inline_keyboard_from_last_photo(context.bot, update.effective_user.id, context.user_data)
+    chat_id = update.effective_user.id
+    conversations_cleanup_if_needed(chat_id, context.bot)
+
     msg = (f'Бот умее адказваць на наступныя каманды:\n\n'
            f'/get: атрымаць выпадковае слова\n'
            f'/about: падрабязнае апісанне боту\n'
@@ -140,76 +141,53 @@ def help(update: Update, context: CallbackContext):
            f'/help: паказаць спіс даступных камандаў\n'
            f'/joke: атрымаць жарт :)'
            )
-    update.message.reply_text(msg)
+    context.bot.send_message(chat_id, msg)
 
 
 def unknown_command(update: Update, context: CallbackContext):
-    remove_inline_keyboard_from_last_photo(context.bot, update.effective_user.id, context.user_data)
-    logger.info(f'unrecognized command: {update.message.text}')
-    update.message.reply_text(f'Выбачайце, каманда не пазнаная: {update.message.text}')
+    if update.message is None:
+        return
+
+    chat_id = update.effective_user.id
+    conversations_cleanup_if_needed(chat_id, context.bot)
+
+    text = update.effective_message.text
+    logger.info(f'unrecognized command: {text}')
+    context.bot.send_message(chat_id, f'Выбачайце, каманда не пазнаная: {text}')
     help(update, context)
 
 
-def _send_photo(bot, chat_id, photo, user_data):
-    buttons = [
-        [InlineKeyboardButton(text='Змяніць бягучае', callback_data=RESEND_CURRENT)],
-        [InlineKeyboardButton(text='Даслаць наступнае', callback_data=SEND_NEXT)]
-    ]
-    keyboard = InlineKeyboardMarkup(buttons)
-    res = bot.send_photo(
-        chat_id=chat_id,
-        photo=photo,
-        reply_markup=keyboard
-    )
-    user_data[K_LAST_PHOTO_MESSAGE_ID] = res.message_id
-
-
-def send_random_word(update: Update, context: CallbackContext):
-    chat_id = update.effective_user.id
-    remove_inline_keyboard_from_last_photo(context.bot, chat_id, context.user_data)
-    ix = np.random.randint(0, len(photo_file_ids))
-    photo = photo_file_ids[ix][1]
-    logger.info(f'sending photo. chat_id: {chat_id}, file_id: {photo}')
-    _send_photo(context.bot, chat_id, photo, context.user_data)
-
-
-def photo_inline_keyboard_handler(update, context):
-    query = update.callback_query
-    chat_id = query.from_user.id
-    data = query.data
-    ix = np.random.randint(0, len(photo_file_ids))
-    photo = photo_file_ids[ix][1]
-    logger.info(f'inline_keyboard_handler. chat_id: {chat_id}, new file_id: {photo}')
-    if data == RESEND_CURRENT:
-        res = context.bot.edit_message_media(
-            chat_id=chat_id,
-            message_id=query.message.message_id,
-            media=InputMediaPhoto(media=photo),
-            reply_markup=query.message.reply_markup
-        )
-        context.bot.answer_callback_query(callback_query_id=query.id)
-    elif data == SEND_NEXT:
-        remove_inline_keyboard_from_last_photo(context.bot, chat_id, context.user_data)
-        _send_photo(context.bot, query.from_user.id, photo, context.user_data)
-        context.bot.answer_callback_query(callback_query_id=query.id)
-    else:
-        raise ValueError(f'could not parse data: {data}')
+def conversations_cleanup_if_needed(chat_id, bot):
+    if K_CONV_FB_ACTIVE in conversation_context[chat_id]:
+        feedback_cleanup(chat_id, bot)
+        del conversation_context[chat_id][K_CONV_FB_ACTIVE]
+    if K_CONV_GET_WORD_ACTIVE in conversation_context[chat_id]:
+        get_word_cleanup(chat_id, bot)
+        del conversation_context[chat_id][K_CONV_GET_WORD_ACTIVE]
 
 
 # ********** feedback conversation methods **********
 
 def feedback_start(update, context):
-    remove_inline_keyboard_from_last_photo(context.bot, update.effective_user.id, context.user_data)
+    chat_id = update.effective_user.id
     if update.message is None:
         return None
+
+    # check if there is no context for current chat
+    if chat_id not in conversation_context:
+        conversation_context[chat_id] = dict()
+
+    # at first check if any conversation is active and cleanup if needed
+    conversations_cleanup_if_needed(chat_id, context.bot)
+    # then indicate a start of a new one
+    conversation_context[chat_id][K_CONV_FB_ACTIVE] = True
+
     update.message.reply_text(f'Калі ласка, апішыце праблему ці сваю параду. Вы можаце далучыць фота, дакумент, '
                               f'даслаць стыкер - я падтрымліваю ўсе фарматы.\n'
                               f'Паведамленне будзе перасланае распрацоўшчыку.\n\n'
-                              f'Каб перарваць размову, выкарыстайце каманду /cancel')
-    chat_id = update.effective_user.id
-    if chat_id not in conversation_context:
-        conversation_context[chat_id] = dict()
-    return FEEDBACK_RECEIVING
+                              f'Каб перарваць размову, скарыстайце любую іншую каманду,\nнапрыклад /get.')
+
+    return CONV_STATE_FB_RECEIVING
 
 
 def feedback_received(update, context: CallbackContext):
@@ -218,23 +196,22 @@ def feedback_received(update, context: CallbackContext):
     chat_id = update.effective_user.id
     conversation_context[chat_id][K_FB_MESSAGE_ID] = update.message.message_id
     reply_markup = InlineKeyboardMarkup([[
-        InlineKeyboardButton('Так', callback_data=FEEDBACK_VERIFY),
-        InlineKeyboardButton('Не', callback_data=FEEDBACK_REJECT)
+        InlineKeyboardButton('Так', callback_data=CB_DATA_FB_VERIFY),
+        InlineKeyboardButton('Не', callback_data=CB_DATA_FB_REJECT)
     ]])
     res = update.message.reply_text(
-        f'Вы ўпэўненыя, што хочаце даслаць гэтае паведамленне?',
+        f'Вы хочаце даслаць гэтае паведамленне? (тэкст у паведамленні на гэтым кроку ўсё яшчэ можна рэдагаваць)',
         reply_markup=reply_markup,
         reply_to_message_id=conversation_context[chat_id][K_FB_MESSAGE_ID]
     )
     conversation_context[chat_id][K_FB_MESSAGE_WITH_INLINE_KEYBOARD_ID] = res.message_id
-    return FEEDBACK_VERIFICATION
+
+    return CONV_STATE_FB_VERIFICATION
 
 
-def clean_on_feedback_conversation_end(chat_id, bot):
-    """ remove fields with message_ids from conversation context dict """
+def feedback_cleanup(chat_id, bot):
     if K_FB_MESSAGE_ID in conversation_context[chat_id]:
         del conversation_context[chat_id][K_FB_MESSAGE_ID]
-    # remove inline keyboard
     if K_FB_MESSAGE_WITH_INLINE_KEYBOARD_ID in conversation_context[chat_id]:
         bot.edit_message_reply_markup(
             chat_id,
@@ -247,44 +224,170 @@ def clean_on_feedback_conversation_end(chat_id, bot):
 def feedback_verified(update: Update, context: CallbackContext):
     query = update.callback_query
     chat_id = update.effective_user.id
+
     user_info_str = get_user_info_str(update.effective_user)
     context.bot.send_message(contact_chat_id, f'#feedback\n\nuser:\n{user_info_str}')
     context.bot.forward_message(
         chat_id=contact_chat_id,
         from_chat_id=chat_id,
         message_id=conversation_context[chat_id][K_FB_MESSAGE_ID])
-    context.bot.send_message(chat_id, 'Вашае паведамленне дасланае.\nВялікі дзякуй!')
+
+    context.bot.send_message(chat_id, 'Вашае паведамленне (яно прыведзенае ніжэй) дасланае распрацоўшчыку.\n'
+                                      'Вялікі дзякуй!')
+    context.bot.forward_message(
+        chat_id=chat_id,
+        from_chat_id=chat_id,
+        message_id=conversation_context[chat_id][K_FB_MESSAGE_ID])
+
     context.bot.answer_callback_query(callback_query_id=query.id)
-    clean_on_feedback_conversation_end(chat_id, context.bot)
+    feedback_cleanup(chat_id, context.bot)
+
     return ConversationHandler.END
 
 
-def feedback_conversation_canceled(update: Update, context):
+def feedback_canceled(update: Update, context):
     chat_id = update.effective_user.id
-    logger.info(f'conversation canceled. user_id: {chat_id}')
-    context.bot.send_message(chat_id, 'Размова перарваная', reply_markup=None)
-    clean_on_feedback_conversation_end(chat_id, context.bot)
+    logger.info(f'feedback conversation canceled. user_id: {chat_id}')
+    # some calls are from inline keyboard
     if update.callback_query is not None:
         context.bot.answer_callback_query(callback_query_id=update.callback_query.id)
+    feedback_cleanup(chat_id, context.bot)
+
     return ConversationHandler.END
 
 
-def feedback_conversation_timeout(bot, update, *rest):
+def feedback_timeout(bot, update):
     chat_id = update.effective_user.id
     logger.info(f'conversation timeout. chat_id: {chat_id}')
-    update.message.reply_text(
+    bot.send_message(
+        chat_id,
         f'Размова перарваная: перавышаны час чакання адказу. Паспрабуйце яшчэ раз.',
-        reply_markup=ReplyKeyboardRemove())
-    clean_on_feedback_conversation_end(chat_id, bot)
+        reply_markup=None)
+    feedback_cleanup(chat_id, bot)
+
+
+def feedback_input_not_recognized(update, context):
+    if update.message is None:
+        return None
+    chat_id = update.effective_user.id
+    context.bot.edit_message_reply_markup(
+        chat_id,
+        conversation_context[chat_id][K_FB_MESSAGE_WITH_INLINE_KEYBOARD_ID],
+        reply_markup=None
+    )
+    reply_markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton('Так', callback_data=CB_DATA_FB_VERIFY),
+        InlineKeyboardButton('Не', callback_data=CB_DATA_FB_REJECT)
+    ]])
+    res = update.message.reply_text(
+        f'Вы хочаце даслаць гэтае паведамленне? (тэкст у паведамленні на гэтым кроку ўсё яшчэ можна рэдагаваць)',
+        reply_markup=reply_markup,
+        reply_to_message_id=conversation_context[chat_id][K_FB_MESSAGE_ID]
+    )
+    conversation_context[chat_id][K_FB_MESSAGE_WITH_INLINE_KEYBOARD_ID] = res.message_id
 
 
 # ********** end of feedback conversation methods **********
 
-def conversation_input_not_recognized(update, context):
-    if update.message is None:
-        return None
-    update.message.reply_text(f'Калі ласка, кіруйцеся інструкцыямі.\n'
-                              f'Каб перарваць размову, выкарыстайце каманду /cancel')
+
+def ignore_update(update, context):
+    pass
+
+
+# ********** get word conversation methods **********
+
+def get_random_photo_object():
+    ix = np.random.randint(0, len(photo_file_ids))
+    photo = photo_file_ids[ix][1]
+    return photo
+
+
+def _send_photo(bot, chat_id, photo):
+    buttons = [
+        [InlineKeyboardButton(text='Змяніць бягучае', callback_data=CB_DATA_GET_WORD_RESEND_CURRENT)],
+        [InlineKeyboardButton(text='Даслаць наступнае', callback_data=CB_DATA_GET_WORD_SEND_NEXT)]
+    ]
+    keyboard = InlineKeyboardMarkup(buttons)
+    res = bot.send_photo(
+        chat_id=chat_id,
+        photo=photo,
+        reply_markup=keyboard
+    )
+    conversation_context[chat_id][K_GET_WORD_LAST_MESSAGE_ID] = res.message_id
+
+
+def get(update: Update, context: CallbackContext):
+    chat_id = update.effective_user.id
+
+    if chat_id not in conversation_context:
+        conversation_context[chat_id] = dict()
+
+    conversations_cleanup_if_needed(chat_id, context.bot)
+    conversation_context[chat_id][K_CONV_GET_WORD_ACTIVE] = True
+
+    photo = get_random_photo_object()
+    logger.info(f'get. chat_id: {chat_id}, file_id: {photo}')
+    _send_photo(context.bot, chat_id, photo)
+
+    return CONV_STATE_GET_WORD_RECEIVED
+
+
+def get_word_resend_current(update: Update, context):
+    query = update.callback_query
+    chat_id = query.from_user.id
+
+    photo = get_random_photo_object()
+
+    buttons = [
+        [InlineKeyboardButton(text='Змяніць бягучае', callback_data=CB_DATA_GET_WORD_RESEND_CURRENT)],
+        [InlineKeyboardButton(text='Даслаць наступнае', callback_data=CB_DATA_GET_WORD_SEND_NEXT)]
+    ]
+    keyboard = InlineKeyboardMarkup(buttons)
+
+    context.bot.edit_message_media(
+        chat_id=chat_id,
+        message_id=query.message.message_id,
+        media=InputMediaPhoto(media=photo),
+        reply_markup=keyboard
+    )
+    context.bot.answer_callback_query(callback_query_id=query.id)
+
+
+def get_word_cleanup(chat_id, bot):
+    if K_GET_WORD_LAST_MESSAGE_ID in conversation_context[chat_id]:
+        bot.edit_message_reply_markup(
+            chat_id,
+            conversation_context[chat_id][K_GET_WORD_LAST_MESSAGE_ID],
+            reply_markup=None
+        )
+        del conversation_context[chat_id][K_GET_WORD_LAST_MESSAGE_ID]
+
+
+def get_word_send_next(update, context):
+    query = update.callback_query
+    chat_id = query.from_user.id
+
+    photo = get_random_photo_object()
+    get_word_cleanup(chat_id, context.bot)
+    _send_photo(context.bot, query.from_user.id, photo)
+    context.bot.answer_callback_query(callback_query_id=query.id)
+
+
+def get_word_timeout(bot, update):
+    chat_id = update.effective_user.id
+    get_word_cleanup(chat_id, bot)
+    logger.info(f'get_word conversation timeout. chat_id: {chat_id}')
+
+
+def get_word_canceled(update, context):
+    chat_id = update.effective_user.id
+    logger.info(f'get_word conversation canceled. user_id: {chat_id}')
+    get_word_cleanup(chat_id, context.bot)
+
+    return ConversationHandler.END
+
+
+# ********** end of get word conversation methods **********
 
 
 def main():
@@ -314,30 +417,56 @@ def main():
     conversation_feedback = ConversationHandler(
         entry_points=[CommandHandler('feedback', feedback_start)],
         states={
-            FEEDBACK_RECEIVING: [
-                CommandHandler('cancel', feedback_conversation_canceled),
+            CONV_STATE_FB_RECEIVING: [
+                MessageHandler(Filters.command, feedback_canceled),
                 MessageHandler(Filters.all, feedback_received)
             ],
-            FEEDBACK_VERIFICATION: [
-                CallbackQueryHandler(feedback_verified, pattern=f'^{FEEDBACK_VERIFY}$'),
-                CallbackQueryHandler(feedback_conversation_canceled, pattern=f'^{FEEDBACK_REJECT}$'),
+            CONV_STATE_FB_VERIFICATION: [
+                CallbackQueryHandler(feedback_verified, pattern=f'^{CB_DATA_FB_VERIFY}$'),
+                CallbackQueryHandler(feedback_canceled, pattern=f'^{CB_DATA_FB_REJECT}$'),
             ],
-            ConversationHandler.TIMEOUT: [MessageHandler(Filters.all, feedback_conversation_timeout)]
+            ConversationHandler.TIMEOUT: [MessageHandler(Filters.all, feedback_timeout)]
         },
-        fallbacks=[CommandHandler('cancel', feedback_conversation_canceled),
-                   MessageHandler(Filters.all, conversation_input_not_recognized)],
+        fallbacks=[
+            MessageHandler(Filters.command, feedback_canceled),
+            MessageHandler(Filters.all, feedback_input_not_recognized)
+        ],
         allow_reentry=True,
         conversation_timeout=20 * 60
     )
-    dp.add_handler(conversation_feedback)
 
-    dp.add_handler(CommandHandler('start', start))
-    dp.add_handler(CommandHandler('about', about))
-    dp.add_handler(CommandHandler('get', send_random_word))
-    dp.add_handler(CommandHandler('help', help))
-    dp.add_handler(CommandHandler('joke', dad_joke))
-    dp.add_handler(CallbackQueryHandler(photo_inline_keyboard_handler))
-    dp.add_handler(MessageHandler(Filters.command, unknown_command))
+    conversation_get_word = ConversationHandler(
+        entry_points=[CommandHandler('get', get)],
+        states={
+            CONV_STATE_GET_WORD_RECEIVED: [
+                CallbackQueryHandler(get_word_resend_current, pattern=f'^{CB_DATA_GET_WORD_RESEND_CURRENT}$'),
+                CallbackQueryHandler(get_word_send_next, pattern=f'^{CB_DATA_GET_WORD_SEND_NEXT}$')
+            ],
+            ConversationHandler.TIMEOUT: [
+                MessageHandler(Filters.all, get_word_timeout),
+                CallbackQueryHandler(get_word_timeout)
+            ]
+        },
+        fallbacks=[MessageHandler(Filters.command, get_word_canceled)],
+        allow_reentry=True,
+        conversation_timeout=20 * 60
+    )
+
+    dp.add_handler(CommandHandler('start', start), group=1)
+    dp.add_handler(CommandHandler('about', about), group=1)
+    dp.add_handler(CommandHandler('help', help), group=1)
+    dp.add_handler(CommandHandler('joke', dad_joke), group=1)
+
+    # ignore to avoid handling update two times
+    # because /get is the entry point of conversation in another group
+    dp.add_handler(CommandHandler('get', ignore_update), group=1)
+    dp.add_handler(CommandHandler('feedback', ignore_update), group=1)
+
+    dp.add_handler(MessageHandler(Filters.command, unknown_command), group=1)
+
+    dp.add_handler(conversation_feedback, group=2)
+
+    dp.add_handler(conversation_get_word, group=3)
 
     dp.add_error_handler(error_handler)
 

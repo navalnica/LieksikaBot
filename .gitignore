@@ -3,3 +3,4 @@ venv
 examples
 
 photo_file_ids_test.json
+error*.txt
