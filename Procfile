@@ -1,1 +1,1 @@
-web: python lieksika_bot.py
+web: python main.py
