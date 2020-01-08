@@ -4,4 +4,5 @@ examples
 __pycache__
 
 photo_file_ids_test.json
+pg.py
 error*.txt

@@ -3,11 +3,13 @@ import json
 import logging
 import traceback
 from functools import wraps
+from signal import SIGINT
 
 import numpy as np
 import requests
 from telegram import (Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, User,
                       ParseMode)
+from telegram.error import BadRequest
 from telegram.ext import (Updater, CallbackContext, CommandHandler, ConversationHandler, MessageHandler, Filters,
                           CallbackQueryHandler)
 
@@ -72,10 +74,11 @@ class LieksikaBot:
         self.mode = 'local'
         self.heroku_app_name = None
         self.heroku_port = None
+        self.prev_webhook_info = None
 
         self.conversation_context = dict()
 
-        self.updater = Updater(token, use_context=True)
+        self.updater = Updater(token, use_context=True, user_sig_handler=self.try_to_restore_webhook)
         self.dp = self.updater.dispatcher
 
         # conversation states
@@ -169,9 +172,18 @@ class LieksikaBot:
             self.updater.start_webhook(listen="0.0.0.0", port=self.heroku_port, url_path=self.token)
             self.updater.bot.setWebhook(f'https://{self.heroku_app_name}.herokuapp.com/{self.token}')
         elif self.mode == 'local':
+            self.prev_webhook_info = self.dp.bot.get_webhook_info()
             self.dp.bot.delete_webhook()
             self.updater.start_polling()
         self.updater.idle()
+
+    def try_to_restore_webhook(self, signal, frame):
+        if signal == SIGINT:
+            to_try = bool(self.prev_webhook_info.url)
+            logger.info(f'handling SIGINT signal. previous webhook url string is not empty: {to_try}')
+            if to_try:
+                self.dp.bot.set_webhook(self.prev_webhook_info.url)
+                logger.info(f'have reset webhook url to previous value')
 
     def error_handler(self, update: Update, context: CallbackContext):
         logger.error(f'Update:\n{update}')
@@ -323,12 +335,16 @@ class LieksikaBot:
         if self.K_FB_MESSAGE_ID in self.conversation_context[chat_id]:
             del self.conversation_context[chat_id][self.K_FB_MESSAGE_ID]
         if self.K_FB_MESSAGE_WITH_INLINE_KEYBOARD_ID in self.conversation_context[chat_id]:
-            bot.edit_message_reply_markup(
-                chat_id,
-                self.conversation_context[chat_id][self.K_FB_MESSAGE_WITH_INLINE_KEYBOARD_ID],
-                reply_markup=None
-            )
-            del self.conversation_context[chat_id][self.K_FB_MESSAGE_WITH_INLINE_KEYBOARD_ID]
+            try:
+                bot.edit_message_reply_markup(
+                    chat_id,
+                    self.conversation_context[chat_id][self.K_FB_MESSAGE_WITH_INLINE_KEYBOARD_ID],
+                    reply_markup=None
+                )
+            except BadRequest as e:
+                logger.error(e)
+            finally:
+                del self.conversation_context[chat_id][self.K_FB_MESSAGE_WITH_INLINE_KEYBOARD_ID]
 
     @log_method_name_and_chat_id_from_update
     def feedback_verified(self, update: Update, context: CallbackContext):
@@ -458,12 +474,16 @@ class LieksikaBot:
     def get_word_cleanup(self, chat_id, bot):
         logger.info(f'get_word_cleanup. chat_id: {chat_id}')
         if self.K_GET_WORD_LAST_MESSAGE_ID in self.conversation_context[chat_id]:
-            bot.edit_message_reply_markup(
-                chat_id,
-                self.conversation_context[chat_id][self.K_GET_WORD_LAST_MESSAGE_ID],
-                reply_markup=None
-            )
-            del self.conversation_context[chat_id][self.K_GET_WORD_LAST_MESSAGE_ID]
+            try:
+                bot.edit_message_reply_markup(
+                    chat_id,
+                    self.conversation_context[chat_id][self.K_GET_WORD_LAST_MESSAGE_ID],
+                    reply_markup=None
+                )
+            except BadRequest as e:
+                logger.error(e)
+            finally:
+                del self.conversation_context[chat_id][self.K_GET_WORD_LAST_MESSAGE_ID]
 
     @log_method_name_and_chat_id_from_update
     def get_word_send_next(self, update, context):
