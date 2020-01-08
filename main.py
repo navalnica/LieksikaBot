@@ -14,16 +14,16 @@ def get_env_var(var, valid_options=None):
 
 
 def main():
-    # token = get_env_var('BOT_TOKEN')
-    token = get_env_var('BOT_TOKEN_TEST')
+    token = get_env_var('BOT_TOKEN')
+    # token = get_env_var('BOT_TOKEN_TEST')
     mode = get_env_var('MODE', valid_options=['heroku', 'local'])
     contact_chat_id = get_env_var('CONTACT_CHAT_ID')
 
     port = os.environ.get('PORT')
     heroku_app_name = os.environ.get('APP_NAME')
 
-    # photos_file_ids_fp = 'photo_file_ids.json'
-    photos_file_ids_fp = 'photo_file_ids_test.json'
+    photos_file_ids_fp = 'photo_file_ids.json'
+    # photos_file_ids_fp = 'photo_file_ids_test.json'
 
     if mode == 'heroku':
         if port is None:

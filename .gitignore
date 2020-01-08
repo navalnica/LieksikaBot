@@ -1,6 +1,7 @@
 .idea
 venv
 examples
+__pycache__
 
 photo_file_ids_test.json
 error*.txt
