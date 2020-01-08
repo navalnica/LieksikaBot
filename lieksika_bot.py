@@ -88,15 +88,60 @@ def reject_edit_update(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
         update = args[0] if len(args) > 0 else kwargs['update']
+        chat_id = update.effective_user.id
         if update.message is None:
-            logger.info(f'{func.__name__}: ignoring edit update')
+            logger.info(f'{func.__name__}. ignoring edit update. chat_id: {chat_id}')
             return
         return func(*args, **kwargs)
 
     return wrapper
 
 
+def log_method_name_and_chat_id_from_update(_method=None, *, update_pos_arg_ix=0):
+    """
+    Log method call into `info` stream
+    :param _method: parameter to check how the decorator is used
+    :param update_pos_arg_ix: index of `update` in positional arguments
+    """
+
+    def outer_wrapper(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            update = args[update_pos_arg_ix] if len(args) > update_pos_arg_ix else kwargs['update']
+            chat_id = update.effective_user.id
+            logger.info(f'{func.__name__}. chat_id: {chat_id}')
+            return func(*args, **kwargs)
+
+        return wrapper
+
+    if _method is None:
+        # decorator is called with parameter `update_pos_arg_ix`
+        return outer_wrapper
+    else:
+        # decorator is called without parentheses
+        return outer_wrapper(_method)
+
+
 @reject_edit_update
+@log_method_name_and_chat_id_from_update
+def start(update: Update, context: CallbackContext):
+    update.message.reply_text(f'Добры дзень!\n'
+                              f'Рады, што вы вырашылі паспрабаваць Lieksika Bot.\n'
+                              f'Ніжэй будуць дасланыя паведамленні з апісаннем боту і '
+                              f'інструкцыямі па яго карыстанні. Паўторна атрымаць іх вы '
+                              f'можаце ў любы момант з дапамогай камандаў\n'
+                              f'/about ды /help')
+    about(update, context)
+    help(update, context)
+
+    # store id of the new user to send scheduled messages
+    user_info_str = get_user_info_str(update.effective_user)
+    description = f'#new_user\n\n{user_info_str}'
+    context.bot.send_message(contact_chat_id, description)
+
+
+@reject_edit_update
+@log_method_name_and_chat_id_from_update
 def about(update: Update, context):
     bot_description = ('Прывітанне!\nLieksika Bot ведае больш за 300 цікавых і адметных беларускіх словаў. '
                        'І іх спіс будзе пашырацца!\n\n'
@@ -121,25 +166,7 @@ def about(update: Update, context):
 
 
 @reject_edit_update
-def start(update: Update, context: CallbackContext):
-    about(update, context)
-    help(update, context)
-
-    user_info_str = get_user_info_str(update.effective_user)
-    description = f'#new_user\n\n{user_info_str}'
-    context.bot.send_message(contact_chat_id, description)
-
-
-@reject_edit_update
-def dad_joke(update, context):
-    url = "https://icanhazdadjoke.com/"
-    headers = {'Accept': 'application/json'}
-    r = requests.request("GET", url, headers=headers)
-    joke = r.json()['joke']
-    update.message.reply_text(joke)
-
-
-@reject_edit_update
+@log_method_name_and_chat_id_from_update
 def help(update: Update, context: CallbackContext):
     msg = (f'Бот умее адказваць на наступныя каманды:\n\n'
            f'/get: атрымаць выпадковае слова\n'
@@ -152,10 +179,24 @@ def help(update: Update, context: CallbackContext):
 
 
 @reject_edit_update
+@log_method_name_and_chat_id_from_update
+def dad_joke(update, context):
+    url = "https://icanhazdadjoke.com/"
+    headers = {'Accept': 'application/json'}
+    try:
+        r = requests.request("GET", url, headers=headers)
+        joke = r.json()['joke']
+        update.message.reply_text(joke)
+    except Exception as e:
+        update.message.reply_text('Выбачайце! Праблемы з падлучэннем да серверу з жартамі)')
+        logger.exception(e)
+
+
+@reject_edit_update
 def unknown_command(update: Update, context: CallbackContext):
     chat_id = update.effective_user.id
     text = update.effective_message.text
-    logger.info(f'unrecognized command: {text}')
+    logger.info(f'unknown_command. chat_id: {chat_id}, text: "{text}"')
     context.bot.send_message(chat_id, f'Выбачайце, каманда не пазнаная: {text}')
     help(update, context)
 
@@ -163,6 +204,7 @@ def unknown_command(update: Update, context: CallbackContext):
 # ********** feedback conversation methods **********
 
 @reject_edit_update
+@log_method_name_and_chat_id_from_update
 def feedback_start(update, context):
     chat_id = update.effective_user.id
 
@@ -179,6 +221,7 @@ def feedback_start(update, context):
 
 
 @reject_edit_update
+@log_method_name_and_chat_id_from_update
 def feedback_received(update, context: CallbackContext):
     chat_id = update.effective_user.id
 
@@ -198,6 +241,7 @@ def feedback_received(update, context: CallbackContext):
 
 
 def feedback_cleanup(chat_id, bot):
+    logger.info(f'feedback_cleanup. chat_id: {chat_id}')
     if K_FB_MESSAGE_ID in conversation_context[chat_id]:
         del conversation_context[chat_id][K_FB_MESSAGE_ID]
     if K_FB_MESSAGE_WITH_INLINE_KEYBOARD_ID in conversation_context[chat_id]:
@@ -209,6 +253,7 @@ def feedback_cleanup(chat_id, bot):
         del conversation_context[chat_id][K_FB_MESSAGE_WITH_INLINE_KEYBOARD_ID]
 
 
+@log_method_name_and_chat_id_from_update
 def feedback_verified(update: Update, context: CallbackContext):
     query = update.callback_query
     chat_id = update.effective_user.id
@@ -233,9 +278,9 @@ def feedback_verified(update: Update, context: CallbackContext):
     return ConversationHandler.END
 
 
+@log_method_name_and_chat_id_from_update
 def feedback_canceled(update: Update, context):
     chat_id = update.effective_user.id
-    logger.info(f'feedback conversation canceled. user_id: {chat_id}')
     # some calls are from inline keyboard
     if update.callback_query is not None:
         context.bot.answer_callback_query(callback_query_id=update.callback_query.id)
@@ -245,9 +290,9 @@ def feedback_canceled(update: Update, context):
     return ConversationHandler.END
 
 
+@log_method_name_and_chat_id_from_update(update_pos_arg_ix=1)
 def feedback_timeout(bot, update):
     chat_id = update.effective_user.id
-    logger.info(f'conversation timeout. chat_id: {chat_id}')
     bot.send_message(
         chat_id,
         f'Размова перарваная: перавышаны час чакання адказу. Паспрабуйце яшчэ раз.',
@@ -256,6 +301,7 @@ def feedback_timeout(bot, update):
 
 
 @reject_edit_update
+@log_method_name_and_chat_id_from_update
 def feedback_input_not_recognized(update, context):
     chat_id = update.effective_user.id
     context.bot.edit_message_reply_markup(
@@ -284,9 +330,10 @@ def ignore_update(update, context):
 
 # ********** get word conversation methods **********
 
-def get_random_photo_object():
+def get_random_photo_object(chat_id):
     ix = np.random.randint(0, len(photo_file_ids))
     photo = photo_file_ids[ix][1]
+    logger.info(f'get_random_photo_object. chat_id: {chat_id}, file_id: "{photo}"')
     return photo
 
 
@@ -305,6 +352,7 @@ def _send_photo(bot, chat_id, photo):
 
 
 @reject_edit_update
+@log_method_name_and_chat_id_from_update
 def get(update: Update, context: CallbackContext):
     chat_id = update.effective_user.id
 
@@ -312,18 +360,18 @@ def get(update: Update, context: CallbackContext):
         conversation_context[chat_id] = dict()
     get_word_cleanup(chat_id, context.bot)
 
-    photo = get_random_photo_object()
-    logger.info(f'get. chat_id: {chat_id}, file_id: {photo}')
+    photo = get_random_photo_object(chat_id)
     _send_photo(context.bot, chat_id, photo)
 
     return CONV_STATE_GET_WORD_RECEIVED
 
 
+@log_method_name_and_chat_id_from_update
 def get_word_resend_current(update: Update, context):
     query = update.callback_query
     chat_id = query.from_user.id
 
-    photo = get_random_photo_object()
+    photo = get_random_photo_object(chat_id)
 
     buttons = [
         [InlineKeyboardButton(text='Змяніць бягучае', callback_data=CB_DATA_GET_WORD_RESEND_CURRENT)],
@@ -341,6 +389,7 @@ def get_word_resend_current(update: Update, context):
 
 
 def get_word_cleanup(chat_id, bot):
+    logger.info(f'get_word_cleanup. chat_id: {chat_id}')
     if K_GET_WORD_LAST_MESSAGE_ID in conversation_context[chat_id]:
         bot.edit_message_reply_markup(
             chat_id,
@@ -350,25 +399,26 @@ def get_word_cleanup(chat_id, bot):
         del conversation_context[chat_id][K_GET_WORD_LAST_MESSAGE_ID]
 
 
+@log_method_name_and_chat_id_from_update
 def get_word_send_next(update, context):
     query = update.callback_query
     chat_id = query.from_user.id
 
-    photo = get_random_photo_object()
+    photo = get_random_photo_object(chat_id)
     get_word_cleanup(chat_id, context.bot)
     _send_photo(context.bot, query.from_user.id, photo)
     context.bot.answer_callback_query(callback_query_id=query.id)
 
 
+@log_method_name_and_chat_id_from_update(update_pos_arg_ix=1)
 def get_word_timeout(bot, update):
     chat_id = update.effective_user.id
     get_word_cleanup(chat_id, bot)
-    logger.info(f'get_word conversation timeout. chat_id: {chat_id}')
 
 
+@log_method_name_and_chat_id_from_update
 def get_word_canceled(update, context):
     chat_id = update.effective_user.id
-    logger.info(f'get_word conversation canceled. user_id: {chat_id}')
     get_word_cleanup(chat_id, context.bot)
 
     return ConversationHandler.END
