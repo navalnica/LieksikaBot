@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import traceback
+from functools import wraps
 
 import numpy as np
 import requests
@@ -14,7 +15,6 @@ from telegram.ext import (Updater, CallbackContext, CommandHandler, Conversation
 # *************** global variables ***************
 
 # TODO: reformat as separate class with attributes
-# TODO: add methods decorator to remove previous inline keyboard
 
 # conversation states
 CONV_STATE_FB_RECEIVING, CONV_STATE_FB_VERIFICATION = range(2)
@@ -26,9 +26,7 @@ CB_DATA_FB_VERIFY, CB_DATA_FB_REJECT = map(str, range(2, 4))
 
 conversation_context = dict()
 
-K_CONV_GET_WORD_ACTIVE = 'conversation_get_word_active'
 K_GET_WORD_LAST_MESSAGE_ID = 'last_photo_message_id'
-K_CONV_FB_ACTIVE = 'conversation_feedback_active'
 K_FB_MESSAGE_ID = 'feedback_message_id'
 K_FB_MESSAGE_WITH_INLINE_KEYBOARD_ID = 'feedback_message_with_inline_keyboard'
 
@@ -81,12 +79,25 @@ def get_user_info_str(user: User):
     return info
 
 
+def reject_edit_update(func):
+    """
+    Reject updates that contain information about edited message.
+    `message` field of such updates is None
+    """
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        update = args[0] if len(args) > 0 else kwargs['update']
+        if update.message is None:
+            logger.info(f'{func.__name__}: ignoring edit update')
+            return
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+@reject_edit_update
 def about(update: Update, context):
-    conversations_cleanup_if_needed(update.effective_user.id, context.bot)
-
-    if update.message is None:
-        return
-
     bot_description = ('Прывітанне!\nLieksika Bot ведае больш за 300 цікавых і адметных беларускіх словаў. '
                        'І іх спіс будзе пашырацца!\n\n'
                        'Словы захоўваюцца ў выглядзе скрыншотаў з рэсурсаў slounik.org, skarnik.by.\n'
@@ -109,9 +120,8 @@ def about(update: Update, context):
     update.message.reply_text(bot_description)
 
 
+@reject_edit_update
 def start(update: Update, context: CallbackContext):
-    conversations_cleanup_if_needed(update.effective_user.id, context.bot)
-
     about(update, context)
     help(update, context)
 
@@ -120,9 +130,8 @@ def start(update: Update, context: CallbackContext):
     context.bot.send_message(contact_chat_id, description)
 
 
+@reject_edit_update
 def dad_joke(update, context):
-    conversations_cleanup_if_needed(update.effective_user.id, context.bot)
-
     url = "https://icanhazdadjoke.com/"
     headers = {'Accept': 'application/json'}
     r = requests.request("GET", url, headers=headers)
@@ -130,10 +139,8 @@ def dad_joke(update, context):
     update.message.reply_text(joke)
 
 
+@reject_edit_update
 def help(update: Update, context: CallbackContext):
-    chat_id = update.effective_user.id
-    conversations_cleanup_if_needed(chat_id, context.bot)
-
     msg = (f'Бот умее адказваць на наступныя каманды:\n\n'
            f'/get: атрымаць выпадковае слова\n'
            f'/about: падрабязнае апісанне боту\n'
@@ -141,46 +148,27 @@ def help(update: Update, context: CallbackContext):
            f'/help: паказаць спіс даступных камандаў\n'
            f'/joke: атрымаць жарт :)'
            )
-    context.bot.send_message(chat_id, msg)
+    update.message.reply_text(msg)
 
 
+@reject_edit_update
 def unknown_command(update: Update, context: CallbackContext):
-    if update.message is None:
-        return
-
     chat_id = update.effective_user.id
-    conversations_cleanup_if_needed(chat_id, context.bot)
-
     text = update.effective_message.text
     logger.info(f'unrecognized command: {text}')
     context.bot.send_message(chat_id, f'Выбачайце, каманда не пазнаная: {text}')
     help(update, context)
 
 
-def conversations_cleanup_if_needed(chat_id, bot):
-    if K_CONV_FB_ACTIVE in conversation_context[chat_id]:
-        feedback_cleanup(chat_id, bot)
-        del conversation_context[chat_id][K_CONV_FB_ACTIVE]
-    if K_CONV_GET_WORD_ACTIVE in conversation_context[chat_id]:
-        get_word_cleanup(chat_id, bot)
-        del conversation_context[chat_id][K_CONV_GET_WORD_ACTIVE]
-
-
 # ********** feedback conversation methods **********
 
+@reject_edit_update
 def feedback_start(update, context):
     chat_id = update.effective_user.id
-    if update.message is None:
-        return None
 
-    # check if there is no context for current chat
     if chat_id not in conversation_context:
         conversation_context[chat_id] = dict()
-
-    # at first check if any conversation is active and cleanup if needed
-    conversations_cleanup_if_needed(chat_id, context.bot)
-    # then indicate a start of a new one
-    conversation_context[chat_id][K_CONV_FB_ACTIVE] = True
+    feedback_cleanup(chat_id, context.bot)
 
     update.message.reply_text(f'Калі ласка, апішыце праблему ці сваю параду. Вы можаце далучыць фота, дакумент, '
                               f'даслаць стыкер - я падтрымліваю ўсе фарматы.\n'
@@ -190,10 +178,10 @@ def feedback_start(update, context):
     return CONV_STATE_FB_RECEIVING
 
 
+@reject_edit_update
 def feedback_received(update, context: CallbackContext):
-    if update.message is None:
-        return None
     chat_id = update.effective_user.id
+
     conversation_context[chat_id][K_FB_MESSAGE_ID] = update.message.message_id
     reply_markup = InlineKeyboardMarkup([[
         InlineKeyboardButton('Так', callback_data=CB_DATA_FB_VERIFY),
@@ -252,6 +240,7 @@ def feedback_canceled(update: Update, context):
     if update.callback_query is not None:
         context.bot.answer_callback_query(callback_query_id=update.callback_query.id)
     feedback_cleanup(chat_id, context.bot)
+    context.bot.send_message(chat_id, 'Размова перарваная')
 
     return ConversationHandler.END
 
@@ -266,9 +255,8 @@ def feedback_timeout(bot, update):
     feedback_cleanup(chat_id, bot)
 
 
+@reject_edit_update
 def feedback_input_not_recognized(update, context):
-    if update.message is None:
-        return None
     chat_id = update.effective_user.id
     context.bot.edit_message_reply_markup(
         chat_id,
@@ -316,14 +304,13 @@ def _send_photo(bot, chat_id, photo):
     conversation_context[chat_id][K_GET_WORD_LAST_MESSAGE_ID] = res.message_id
 
 
+@reject_edit_update
 def get(update: Update, context: CallbackContext):
     chat_id = update.effective_user.id
 
     if chat_id not in conversation_context:
         conversation_context[chat_id] = dict()
-
-    conversations_cleanup_if_needed(chat_id, context.bot)
-    conversation_context[chat_id][K_CONV_GET_WORD_ACTIVE] = True
+    get_word_cleanup(chat_id, context.bot)
 
     photo = get_random_photo_object()
     logger.info(f'get. chat_id: {chat_id}, file_id: {photo}')
