@@ -266,7 +266,10 @@ class LieksikaBot:
     @reject_edit_update
     @log_method_name_and_chat_id_from_update
     def help(self, update: Update, context: CallbackContext):
-        msg = (f'Бот умее адказваць на наступныя каманды:\n\n'
+        msg = (f'Вы можаце абраць патрэбную каманду праз меню камандаў, '
+               f'што знаходзіцца справа ад поля ўводу тэксту, '
+               f'альбо націснуць на вылучаны тэкст з камандай у любым паведамленні.\n\n'
+               f'Спіс даступных камандаў:\n'
                f'/get: атрымаць выпадковае слова\n'
                f'/about: апісанне боту\n'
                f'/feedback: напісаць распрацоўшчыкам\n'
