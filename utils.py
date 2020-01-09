@@ -6,7 +6,7 @@ import shutil
 import telegram
 import tqdm
 from PIL import Image
-from telegram.ext import Updater, CallbackContext
+from telegram.ext import CallbackContext
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
                     level=logging.INFO)
@@ -80,23 +80,14 @@ def crop_and_save_photo_dir(photos_dp, left, up, width, height):
 
 
 def main():
-    token = os.environ.get('BOT_TOKEN')
-    if not token:
-        raise EnvironmentError('BOT_TOKEN variable not found in environment')
     chat_id = os.environ.get('CONTACT_CHAT_ID')
-    if not chat_id:
-        raise EnvironmentError('CONTACT_CHAT_ID variable not found in environment')
 
-    updater = Updater(token, use_context=True)
-    dp = updater.dispatcher
-    dp.add_error_handler(error_handler)
-
-    photos_dp_list = [
-        '/media/storage/lieksika_bot/screens/cropped/12.31.2019/high_nav_bar_vertical_cropped',
-        '/media/storage/lieksika_bot/screens/cropped/12.31.2019/lo_nav_bar_horizontal_cropped',
-        '/media/storage/lieksika_bot/screens/cropped/12.31.2019/lo_nav_bar_vertical_cropped'
-    ]
-    upload_photos_and_store_file_ids(dp.bot, chat_id, photos_dp_list)
+    # photos_dp_list = [
+    #     '/media/storage/lieksika_bot/screens/cropped/12.31.2019/high_nav_bar_vertical_cropped',
+    #     '/media/storage/lieksika_bot/screens/cropped/12.31.2019/lo_nav_bar_horizontal_cropped',
+    #     '/media/storage/lieksika_bot/screens/cropped/12.31.2019/lo_nav_bar_vertical_cropped'
+    # ]
+    # upload_photos_and_store_file_ids(dp.bot, chat_id, photos_dp_list)
 
     # with open('photo_file_ids.json', 'rb') as fin:
     #     photo_file_ids = json.load(fin)
@@ -109,8 +100,8 @@ def main():
     # # crop photos
     # root_photos_dp = '/media/storage/lieksika_bot/screens/12.30.19'
     # crop_and_save_photo_dir(f'{root_photos_dp}/high_nav_bar_vertical', 0, 117, 1065, 2019)
-    # crop_and_save_photo_dir(f'{root_photos_dp}/lo_nav_bar_vertical', 0, 117, 1065, 2118)
     # crop_and_save_photo_dir(f'{root_photos_dp}/lo_nav_bar_horizontal', 116, 72, 2119, 930)
+    # crop_and_save_photo_dir(f'{root_photos_dp}/lo_nav_bar_vertical', 0, 117, 1065, 2118)
 
 
 if __name__ == '__main__':
