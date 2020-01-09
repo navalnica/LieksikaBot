@@ -1,6 +1,7 @@
 import datetime
 import json
 import logging
+import os
 import traceback
 from functools import wraps
 from signal import SIGINT
@@ -66,16 +67,29 @@ def log_method_name_and_chat_id_from_update(_method=None, *, update_pos_arg_ix=0
 
 class LieksikaBot:
 
-    def __init__(self, token, contact_chat_id, mode, photos_file_ids_fp):
-        self.token = token
-        self.contact_chat_id = contact_chat_id
+    @staticmethod
+    def validate_variable(var):
+        if var is None:
+            raise ValueError(f'variable must be not None')
+        return var
+
+    def __init__(self, token, contact_chat_id, photos_file_ids_fp):
+        self.token = LieksikaBot.validate_variable(token)
+        self.contact_chat_id = LieksikaBot.validate_variable(contact_chat_id)
+
+        if not os.path.isfile(photos_file_ids_fp):
+            raise FileNotFoundError(photos_file_ids_fp)
         self.photos_file_ids_fp = photos_file_ids_fp
+        with open(photos_file_ids_fp) as fin:
+            photo_file_ids = json.load(fin)
+            self.photos_file_ids = tuple(photo_file_ids.items())
 
         self.mode = 'local'
         self.heroku_app_name = None
         self.heroku_port = None
         self.prev_webhook_info = None
 
+        # store information about conversations, such as id of the message with InlineKeyboard to remove
         self.conversation_context = dict()
 
         self.updater = Updater(token, use_context=True, user_sig_handler=self.try_to_restore_webhook)
@@ -89,20 +103,17 @@ class LieksikaBot:
         self.CB_DATA_GET_WORD_RESEND_CURRENT, self.CB_DATA_GET_WORD_SEND_NEXT = map(str, range(2))
         self.CB_DATA_FB_VERIFY, self.CB_DATA_FB_REJECT = map(str, range(2, 4))
 
+        # keys to use in conversation_context dict
         self.K_GET_WORD_LAST_MESSAGE_ID = 'last_photo_message_id'
         self.K_FB_MESSAGE_ID = 'feedback_message_id'
         self.K_FB_MESSAGE_WITH_INLINE_KEYBOARD_ID = 'feedback_message_with_inline_keyboard'
-
-        with open(self.photos_file_ids_fp) as fin:
-            photo_file_ids = json.load(fin)
-            self.photos_file_ids = tuple(photo_file_ids.items())
 
         self.init_handlers()
 
     def set_heroku_mode(self, heroku_app_name, heroku_port):
         self.mode = 'heroku'
-        self.heroku_app_name = heroku_app_name
-        self.heroku_port = heroku_port
+        self.heroku_app_name = LieksikaBot.validate_variable(heroku_app_name)
+        self.heroku_port = int(LieksikaBot.validate_variable(heroku_port))
 
     def init_handlers(self):
         conversation_feedback = ConversationHandler(
@@ -123,7 +134,7 @@ class LieksikaBot:
                 MessageHandler(Filters.all, self.feedback_input_not_recognized)
             ],
             allow_reentry=True,
-            conversation_timeout=20 * 60
+            conversation_timeout=10 * 60
         )
 
         conversation_get_word = ConversationHandler(
@@ -141,7 +152,7 @@ class LieksikaBot:
             },
             fallbacks=[MessageHandler(Filters.command, self.get_word_canceled)],
             allow_reentry=True,
-            conversation_timeout=20 * 60
+            conversation_timeout=10 * 60
         )
 
         self.dp.add_handler(CommandHandler('start', self.start), group=1)
@@ -220,12 +231,11 @@ class LieksikaBot:
     @reject_edit_update
     @log_method_name_and_chat_id_from_update
     def start(self, update: Update, context: CallbackContext):
-        update.message.reply_text(f'Добры дзень!\n'
-                                  f'Рады, што вы вырашылі паспрабаваць Lieksika Bot.\n'
-                                  f'Ніжэй будуць дасланыя паведамленні з апісаннем боту і '
-                                  f'інструкцыямі па яго карыстанні. Паўторна атрымаць іх вы '
-                                  f'можаце ў любы момант з дапамогай камандаў\n'
-                                  f'/about ды /help')
+        update.message.reply_text(
+            f'Добры дзень!\n'
+            f'Ніжэй будуць дасланыя паведамленні з апісаннем і інструкцыямі па карыстанні боту. '
+            f'У любы момант вы можаце атрымаць іх нанава з дапамогай камандаў\n'
+            f'/about ды /help')
         self.about(update, context)
         self.help(update, context)
 
@@ -238,25 +248,19 @@ class LieksikaBot:
     @log_method_name_and_chat_id_from_update
     def about(self, update: Update, context):
         bot_description = (
-            'Прывітанне!\nLieksika Bot ведае больш за 300 цікавых і адметных беларускіх словаў. '
-            'І іх спіс будзе пашырацца!\n\n'
+            'Бот Lieksika ведае больш за 300 цікавых беларускіх словаў. І іх спіс будзе пашырацца!\n'
             'Словы захоўваюцца ў выглядзе скрыншотаў з рэсурсаў slounik.org, skarnik.by.\n'
-            'Вялікі дзякуй іх распрацоўшчыкам за праведзеную працу па сістэматызацыі і стварэнні '
-            'сайтаў і мабільнага дадатку. На жаль, іх інтэрфэйсы не маюць магчымасці ствараць падборкі '
-            'словаў, дасылаць напаміны для паўтарэння вывучаных словаў. '
-            'З мэтай скласці базу цікавых і не пашыраных у штодзённым '
-            'жыцці словаў, аўтаматызаваць іх паўтарэнне і быў створаны гэты бот.\n\n'
+            'Вялікі дзякуй іх распрацоўшчыкам за праведзеную працу, але, на жаль, '
+            'рэсурсы маюць абмежаванні ў выкарыстанні.\n'
+            'З мэтай скласці базу адметных словаў і аўтаматызаваць працэс іх паўтарэння быў створаны гэты бот.\n'
             'У будучыні плануецца дадаць магчымасць рэгулярнай рассылкі словаў: '
-            'штодня вы зможаце атрымліваць падборку новай цікавай лексікі.\n\n'
-            'Каб бот даслаў вам выпадковае слова, карыстайце каманду /get.\n'
-            'З дапамогай клавішаў пад атрыманым паведамленнем вы можаце альбо загадаць боту змяніць апошняе '
-            'слова, калі ўжо ведаеце яго, альбо захаваць паведамленне і перайсці да наступнага слова.\n\n'
-            'Каб даслаць распрацоўшчыку сваю параду альбо інфармацыю пра памылку, '
-            'карыстайце каманду /feedback.\n\n'
-            'Прыемнага паглыблення ў свет беларускай мовы!\n\n'
-            '!! Калі вы хочаце дапамагчы ў распрацоўцы slounik.org, skarnik.by ці іншых беларускіх '
-            'электронных рэсурсаў, прысвечаных мове, абавязкова напішыце распрацоўшчыку праз '
-            'каманду \n/feedback !!')
+            'штодня вы зможаце атрымліваць падборку адметнай лексікі. Аднак нават зараз вы можаце '
+            'ў некалькі клікаў даведацца на новае слова!\n\n'
+            'Каб даслаць распрацоўшчыкам боту інфармацыю пра памылку альбо сваю параду, '
+            'карыстайце каманду /feedback.\n'
+            'Калі вы хочаце дапамагчы ў распрацоўцы slounik.org, skarnik.by ці іншых беларускіх '
+            'моўных рэсурсаў, абавязкова пішыце нам!\n\n'
+            'Прыемнага карыстання!\n\n')
         update.message.reply_text(bot_description)
 
     @reject_edit_update
@@ -264,10 +268,10 @@ class LieksikaBot:
     def help(self, update: Update, context: CallbackContext):
         msg = (f'Бот умее адказваць на наступныя каманды:\n\n'
                f'/get: атрымаць выпадковае слова\n'
-               f'/about: падрабязнае апісанне боту\n'
-               f'/feedback: напісаць распрацоўшчыку\n'
+               f'/about: апісанне боту\n'
+               f'/feedback: напісаць распрацоўшчыкам\n'
                f'/help: паказаць спіс даступных камандаў\n'
-               f'/joke: атрымаць жарт :)'
+               f'/joke: пасмяяцца (магчыма) над жартам 🙃'
                )
         update.message.reply_text(msg)
 
