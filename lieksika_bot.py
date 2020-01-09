@@ -233,7 +233,7 @@ class LieksikaBot:
     def start(self, update: Update, context: CallbackContext):
         update.message.reply_text(
             f'Добры дзень!\n'
-            f'Ніжэй будуць дасланыя паведамленні з апісаннем і інструкцыямі па карыстанні боту. '
+            f'Ніжэй будуць дасланыя паведамленні з апісаннем і інструкцыямі па карыстанні ботам. '
             f'У любы момант вы можаце атрымаць іх нанава з дапамогай камандаў\n'
             f'/about ды /help')
         self.about(update, context)
