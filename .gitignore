@@ -1,8 +1,19 @@
-.idea
-venv
-examples
-__pycache__
+# ignore everything under current directory
+/*
 
-photo_file_ids_test.json
-pg.py
-error*.txt
+# whiltelist some files
+!README.md
+!Procfile
+!requirements.txt
+!photo_file_ids.json
+
+!img
+
+# to whitelist certain files under ignored folder,
+# at first whitelist that folder and ignore it's content
+!src
+src/*
+!src/main.py
+!src/lieksika_bot.py
+!src/sender.py
+!src/utils.py

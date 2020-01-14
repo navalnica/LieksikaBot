@@ -1,6 +1,6 @@
 import os
 
-from lieksika_bot import LieksikaBot
+from src.lieksika_bot import LieksikaBot
 
 
 def main():
