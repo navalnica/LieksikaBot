@@ -12,10 +12,11 @@ _belarusian linguistic resources_ or help us with this bot see the sections belo
 The bot is written with [python-telegram-bot](https://python-telegram-bot.org) python wrapper
 for [Telegram Bot API](https://core.telegram.org/bots/api).
 
-![1.jpg](img/1.jpg) |
-![2.jpg](img/2.jpg) |
-![3.jpg](img/3.jpg) |
-:---:|:---:|:---:|
+
+|<!-- -->|<!-- -->|<!-- -->|
+|:---:|:---:|:---:|
+![1.jpg](img/1.jpg)|![2.jpg](img/2.jpg)|![3.jpg](img/3.jpg)|
+
 
 
 ## Contact
